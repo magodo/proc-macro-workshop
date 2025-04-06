@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::DeriveInput;
+use syn::{Data, DataStruct, DeriveInput, Fields, FieldsNamed};
 
 #[proc_macro_derive(Builder)]
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -9,15 +9,33 @@ pub fn derive(input: TokenStream) -> TokenStream {
 }
 
 fn impl_builder(ast: &DeriveInput) -> TokenStream {
-    eprintln!("{:#?}", ast);
+    //eprintln!("{:#?}", ast);
     let type_name = &ast.ident;
     let builder_type_name = format_ident!("{}Builder", type_name);
+
+    let fields = match ast.data {
+        Data::Struct(DataStruct {
+            fields: Fields::Named(FieldsNamed { ref named, .. }),
+            ..
+        }) => named,
+        _ => panic!("malformed type"),
+    };
+
+    let field_names: Vec<_> = fields.iter().map(|f| f.ident.as_ref().unwrap()).collect();
+    let field_types: Vec<_> = fields.iter().map(|f| &f.ty).collect();
+
     let gen = quote! {
         pub struct #builder_type_name {
-            executable: Option<String>,
-            args: Option<Vec<String>>,
-            env: Option<Vec<String>>,
-            current_dir: Option<String>,
+            #(#field_names: Option<#field_types>,)*
+        }
+
+        impl #builder_type_name {
+            #(
+                fn #field_names(&mut self, #field_names: #field_types) -> &mut Self {
+                    self.#field_names = Some(#field_names);
+                    self
+                }
+            )*
         }
 
         impl #type_name {
