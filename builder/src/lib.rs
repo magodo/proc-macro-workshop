@@ -47,10 +47,7 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
         impl #type_name {
             pub fn builder() -> #builder_type_name {
                 #builder_type_name {
-                    executable: None,
-                    args: None,
-                    env: None,
-                    current_dir: None,
+                    #(#field_names: None),*
                 }
             }
         }
