@@ -36,6 +36,12 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
                     self
                 }
             )*
+
+                pub fn build(&mut self) -> Result<#type_name, Box<dyn std::error::Error>> {
+                    Ok(#type_name{
+                        #(#field_names: self.#field_names.take().unwrap_or(<#field_types>::default())),*
+                    })
+                }
         }
 
         impl #type_name {
