@@ -1,17 +1,19 @@
 use proc_macro::TokenStream;
+use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
-    AngleBracketedGenericArguments, Data, DataStruct, DeriveInput, Fields, FieldsNamed,
-    GenericArgument, Ident, Path, PathArguments, PathSegment, Type, TypePath,
+    AngleBracketedGenericArguments, Attribute, Data, DataStruct, DeriveInput, Expr, ExprAssign,
+    ExprLit, ExprPath, Fields, FieldsNamed, GenericArgument, Ident, Lit, Path, PathArguments,
+    PathSegment, Type, TypePath,
 };
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_builder(&ast)
 }
 
-fn option_inner_type(ty: &Type) -> Option<Ident> {
+fn option_inner_type(ty: &Type) -> Option<&Ident> {
     if let Type::Path(TypePath {
         path: Path { ref segments, .. },
         ..
@@ -29,7 +31,7 @@ fn option_inner_type(ty: &Type) -> Option<Ident> {
                     }))) = args.first()
                     {
                         if let Some(PathSegment { ident, .. }) = segments.first() {
-                            return Some(ident.clone());
+                            return Some(ident);
                         }
                     }
                 }
@@ -37,6 +39,71 @@ fn option_inner_type(ty: &Type) -> Option<Ident> {
         }
     }
     None
+}
+
+fn vec_inner_type(ty: &Type) -> Option<&Ident> {
+    if let Type::Path(TypePath {
+        path: Path { ref segments, .. },
+        ..
+    }) = ty
+    {
+        if let Some(PathSegment { ident, arguments }) = segments.first() {
+            if ident == "Vec" {
+                if let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
+                    args, ..
+                }) = arguments
+                {
+                    if let Some(GenericArgument::Type(Type::Path(TypePath {
+                        path: Path { ref segments, .. },
+                        ..
+                    }))) = args.first()
+                    {
+                        if let Some(PathSegment { ident, .. }) = segments.first() {
+                            return Some(ident);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+#[derive(Default)]
+struct FieldAttribute {
+    each_name: Option<Ident>,
+}
+
+fn attr_each_value(attrs: &Vec<Attribute>) -> Option<FieldAttribute> {
+    if attrs.len() == 0 {
+        return None;
+    }
+    let mut field_attribute = FieldAttribute::default();
+    attrs.iter().for_each(|attr| {
+        if attr.path().is_ident("builder") {
+            if let Ok(Expr::Assign(ExprAssign { left, right, .. })) = attr.parse_args() {
+                if let Expr::Path(ExprPath {
+                    path: Path { ref segments, .. },
+                    ..
+                }) = *left
+                {
+                    if let Some(PathSegment { ident, .. }) = segments.first() {
+                        if ident == "each" {
+                            if let Expr::Lit(ExprLit {
+                                lit: Lit::Str(lit_str),
+                                ..
+                            }) = *right
+                            {
+                                field_attribute.each_name =
+                                    Some(Ident::new(&lit_str.value(), Span::call_site()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    Some(field_attribute)
 }
 
 fn impl_builder(ast: &DeriveInput) -> TokenStream {
@@ -66,6 +133,16 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
                     self
                 }
             };
+        } else if let Some(attr) = attr_each_value(&f.attrs) {
+            if let Some(each_name) = attr.each_name {
+                let ty = vec_inner_type(ty).unwrap();
+                return quote! {
+                    fn #each_name(&mut self, #each_name: #ty) -> &mut Self {
+                        self.#name.push(#each_name);
+                        self
+                    }
+                };
+            }
         }
         quote! {
             fn #name(&mut self, #name: #ty) -> &mut Self {
