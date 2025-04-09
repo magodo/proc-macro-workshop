@@ -2,9 +2,8 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
-    AngleBracketedGenericArguments, Attribute, Data, DataStruct, DeriveInput, Expr, ExprAssign,
-    ExprLit, ExprPath, Fields, FieldsNamed, GenericArgument, Ident, Lit, Path, PathArguments,
-    PathSegment, Type, TypePath,
+    Attribute, Data, DataStruct, DeriveInput, Expr, ExprAssign, ExprLit, Fields, FieldsNamed,
+    GenericArgument, Ident, Lit, Path, PathArguments, PathSegment, Type, TypePath,
 };
 
 #[proc_macro_derive(Builder, attributes(builder))]
@@ -13,54 +12,17 @@ pub fn derive(input: TokenStream) -> TokenStream {
     impl_builder(&ast)
 }
 
-fn option_inner_type(ty: &Type) -> Option<&Ident> {
+fn inner_type<'a>(wrapper: &str, ty: &'a Type) -> Option<&'a Type> {
     if let Type::Path(TypePath {
         path: Path { ref segments, .. },
         ..
     }) = ty
     {
         if let Some(PathSegment { ident, arguments }) = segments.first() {
-            if ident == "Option" {
-                if let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
-                    args, ..
-                }) = arguments
-                {
-                    if let Some(GenericArgument::Type(Type::Path(TypePath {
-                        path: Path { ref segments, .. },
-                        ..
-                    }))) = args.first()
-                    {
-                        if let Some(PathSegment { ident, .. }) = segments.first() {
-                            return Some(ident);
-                        }
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
-fn vec_inner_type(ty: &Type) -> Option<&Ident> {
-    if let Type::Path(TypePath {
-        path: Path { ref segments, .. },
-        ..
-    }) = ty
-    {
-        if let Some(PathSegment { ident, arguments }) = segments.first() {
-            if ident == "Vec" {
-                if let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
-                    args, ..
-                }) = arguments
-                {
-                    if let Some(GenericArgument::Type(Type::Path(TypePath {
-                        path: Path { ref segments, .. },
-                        ..
-                    }))) = args.first()
-                    {
-                        if let Some(PathSegment { ident, .. }) = segments.first() {
-                            return Some(ident);
-                        }
+            if ident == wrapper {
+                if let PathArguments::AngleBracketed(arg) = arguments {
+                    if let Some(GenericArgument::Type(typ)) = arg.args.first() {
+                        return Some(typ);
                     }
                 }
             }
@@ -74,20 +36,18 @@ struct FieldAttribute {
     each_name: Option<Ident>,
 }
 
-fn attr_each_value(attrs: &Vec<Attribute>) -> Option<FieldAttribute> {
+fn attr_builder_value(attrs: &Vec<Attribute>) -> Option<FieldAttribute> {
     if attrs.len() == 0 {
         return None;
     }
     let mut field_attribute = FieldAttribute::default();
-    attrs.iter().for_each(|attr| {
-        if attr.path().is_ident("builder") {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("builder"))
+        .for_each(|attr| {
             if let Ok(Expr::Assign(ExprAssign { left, right, .. })) = attr.parse_args() {
-                if let Expr::Path(ExprPath {
-                    path: Path { ref segments, .. },
-                    ..
-                }) = *left
-                {
-                    if let Some(PathSegment { ident, .. }) = segments.first() {
+                if let Expr::Path(expr) = *left {
+                    if let Some(ident) = expr.path.get_ident() {
                         if ident == "each" {
                             if let Expr::Lit(ExprLit {
                                 lit: Lit::Str(lit_str),
@@ -101,8 +61,7 @@ fn attr_each_value(attrs: &Vec<Attribute>) -> Option<FieldAttribute> {
                     }
                 }
             }
-        }
-    });
+        });
     Some(field_attribute)
 }
 
@@ -126,16 +85,16 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
         let name = f.ident.as_ref().unwrap();
         let ty = &f.ty;
 
-        if let Some(ty) = option_inner_type(ty) {
+        if let Some(ty) = inner_type("Option", ty) {
             return quote! {
                 fn #name(&mut self, #name: #ty) -> &mut Self {
                     self.#name = Some(#name);
                     self
                 }
             };
-        } else if let Some(attr) = attr_each_value(&f.attrs) {
+        } else if let Some(attr) = attr_builder_value(&f.attrs) {
             if let Some(each_name) = attr.each_name {
-                let ty = vec_inner_type(ty).unwrap();
+                let ty = inner_type("Vec", ty).unwrap();
                 return quote! {
                     fn #each_name(&mut self, #each_name: #ty) -> &mut Self {
                         self.#name.push(#each_name);
