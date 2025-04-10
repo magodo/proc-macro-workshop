@@ -3,7 +3,7 @@ use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
     Attribute, Data, DataStruct, DeriveInput, Expr, ExprAssign, ExprLit, Fields, FieldsNamed,
-    GenericArgument, Ident, Lit, Path, PathArguments, PathSegment, Type, TypePath,
+    GenericArgument, Ident, Lit, Meta, Path, PathArguments, PathSegment, Type, TypePath,
 };
 
 #[proc_macro_derive(Builder, attributes(builder))]
@@ -36,33 +36,40 @@ struct FieldAttribute {
     each_name: Option<Ident>,
 }
 
-fn attr_builder_value(attrs: &Vec<Attribute>) -> Option<FieldAttribute> {
+fn attr_builder_value(attrs: &Vec<Attribute>) -> Result<Option<FieldAttribute>, syn::Error> {
     if attrs.len() == 0 {
-        return None;
+        return Ok(None);
     }
     let mut field_attribute = FieldAttribute::default();
-    attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("builder"))
-        .for_each(|attr| {
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("builder")) {
+        if let Meta::List(ref meta) = attr.meta {
             if let Ok(Expr::Assign(ExprAssign { left, right, .. })) = attr.parse_args() {
                 if let Expr::Path(expr) = *left {
                     if let Some(ident) = expr.path.get_ident() {
-                        if ident == "each" {
-                            if let Expr::Lit(ExprLit {
-                                lit: Lit::Str(lit_str),
-                                ..
-                            }) = *right
-                            {
-                                field_attribute.each_name =
-                                    Some(Ident::new(&lit_str.value(), Span::call_site()));
+                        match ident {
+                            _ if ident == "each" => {
+                                if let Expr::Lit(ExprLit {
+                                    lit: Lit::Str(lit_str),
+                                    ..
+                                }) = *right
+                                {
+                                    field_attribute.each_name =
+                                        Some(Ident::new(&lit_str.value(), Span::call_site()));
+                                }
+                            }
+                            _ => {
+                                return Err(syn::Error::new_spanned(
+                                    meta,
+                                    r#"expected `builder(each = "...")`"#,
+                                ));
                             }
                         }
                     }
                 }
             }
-        });
-    Some(field_attribute)
+        }
+    }
+    Ok(Some(field_attribute))
 }
 
 fn impl_builder(ast: &DeriveInput) -> TokenStream {
@@ -92,15 +99,24 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
                     self
                 }
             };
-        } else if let Some(attr) = attr_builder_value(&f.attrs) {
-            if let Some(each_name) = attr.each_name {
-                let ty = inner_type("Vec", ty).unwrap();
-                return quote! {
-                    fn #each_name(&mut self, #each_name: #ty) -> &mut Self {
-                        self.#name.push(#each_name);
-                        self
+        } else {
+            match attr_builder_value(&f.attrs) {
+                Ok(attr) => {
+                    if let Some(attr) = attr {
+                        if let Some(each_name) = attr.each_name {
+                            let ty = inner_type("Vec", ty).unwrap();
+                            return quote! {
+                                fn #each_name(&mut self, #each_name: #ty) -> &mut Self {
+                                    self.#name.push(#each_name);
+                                    self
+                                }
+                            };
+                        }
                     }
-                };
+                }
+                Err(err) => {
+                    return err.to_compile_error();
+                }
             }
         }
         quote! {
