@@ -5,16 +5,21 @@ use syn::spanned::Spanned;
 #[proc_macro_attribute]
 pub fn sorted(_args: TokenStream, input: TokenStream) -> TokenStream {
     eprintln!("{:#?}", input);
-    let input = syn::parse(input).unwrap();
+    let mut input_ts = input.clone();
+    let item = syn::parse(input).unwrap();
 
-    match impl_sorted(&input) {
+    match impl_sorted(&item) {
         Ok(ts) => ts,
-        Err(err) => err.to_compile_error().into(),
+        Err(err) => {
+            let err_ts: TokenStream = err.to_compile_error().into();
+            input_ts.extend(err_ts);
+            input_ts
+        }
     }
 }
 
-fn impl_sorted(input: &syn::Item) -> Result<TokenStream, syn::Error> {
-    if let syn::Item::Enum(e) = input {
+fn impl_sorted(item: &syn::Item) -> Result<TokenStream, syn::Error> {
+    if let syn::Item::Enum(e) = item {
         let variants: Vec<_> = e.variants.iter().collect();
         for i in 0..variants.len() - 1 {
             for j in (i + 1)..variants.len() {
