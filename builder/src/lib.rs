@@ -95,7 +95,7 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
         if let Some(ty) = inner_type("Option", ty) {
             return quote! {
                 fn #name(&mut self, #name: #ty) -> &mut Self {
-                    self.#name = Some(#name);
+                    self.#name = core::option::Option::Some(#name);
                     self
                 }
             };
@@ -142,8 +142,8 @@ fn impl_builder(ast: &DeriveInput) -> TokenStream {
         impl #builder_type_name {
             #(#field_name_method)*
 
-                pub fn build(&mut self) -> Result<#type_name, Box<dyn std::error::Error>> {
-                    Ok(#type_name{
+                pub fn build(&mut self) -> core::result::Result<#type_name, std::boxed::Box<dyn std::error::Error>> {
+                    core::result::Result::Ok(#type_name{
                         #(#field_name_build)*
                     })
                 }
